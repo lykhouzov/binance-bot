@@ -1,2 +1,7 @@
 /target
 /data
+/var
+.bkp
+.env
+Cargo.lock
+.vscode

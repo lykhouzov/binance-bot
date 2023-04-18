@@ -1,0 +1,200 @@
+use binance::agent::consts::INIT_BALANCE;
+use binance::agent::conv::dqn::DQNAgent;
+use binance::agent::dfdx::ppo::PPOAgent;
+use binance::agent::Agent;
+use binance::dataset::Dataset;
+use binance::environment::{Environment, Interval};
+use binance::utils::{get_img_state_vec, logger_init};
+use clap::builder::TypedValueParser as _;
+use clap::{arg, command, Parser};
+use std::collections::VecDeque;
+use std::error::Error;
+use std::num::ParseIntError;
+use std::path::PathBuf;
+use std::str::FromStr;
+use std::time::Instant;
+
+use yata::core::PeriodType;
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct State {
+    step: usize,
+    price: f32,
+    state: Vec<f32>,
+}
+const SAVED_STATES: &'static str = "data/saved_states.json";
+fn main() -> Result<(), Box<dyn Error>> {
+    logger_init();
+    let coach = Coach::parse();
+
+    let saved_states = if let Ok(file) = std::fs::File::open(SAVED_STATES) {
+        log::info!("Load Saved States");
+        serde_json::from_reader(file)?
+    } else {
+        log::info!("Generating Saved States");
+        let (klines, indicators) = {
+            let mut ds = coach.dataset();
+            for _ in 0..ds.skip_index() {
+                let _ = ds.next();
+            }
+            let mut out_s = Vec::new();
+            let mut out_t = Vec::new();
+            for (_step, kline, tas) in ds {
+                out_s.push(kline);
+                out_t.push(tas);
+            }
+            (out_s, out_t)
+        };
+        let mut saved_statest = Vec::new();
+        for (step, (kline, tas)) in klines[..]
+            .windows(coach.window)
+            .zip(indicators.windows(coach.window))
+            .enumerate()
+        {
+            let price = kline.last().unwrap().close as f32;
+            let state = get_img_state_vec(kline, tas, step as usize, false)?;
+            let state: Vec<f32> = state.iter().map(|x| (*x as f32) / 255.0).collect();
+            saved_statest.push(State { step, price, state })
+        }
+
+        
+        let file = std::fs::OpenOptions::new()
+            .append(false)
+            .create(true)
+            .write(true)
+            .read(true)
+            .open(SAVED_STATES)?;
+        serde_json::to_writer(file, &saved_statest)?;
+        saved_statest
+    };
+
+    // let mut agent = PPOAgent::new();
+    let mut agent = DQNAgent::new();
+
+    for ep in 1..=coach.episodes {
+        let time = Instant::now();
+        agent.episode_started(ep);
+        let mut env = Environment::new(INIT_BALANCE, Interval::Minute(1));
+        // let mut ds = coach.dataset();
+        log::info!("Eposide #{} started", ep);
+        // log::debug!("Skip {} steps to fill TAs", &ds.skip_index());
+        // for _ in 0..ds.skip_index() {
+        //     let _ = ds.next();
+        // }
+        // let mut state_klines = VecDeque::with_capacity(coach.window);
+        // let mut state_indicators = VecDeque::with_capacity(coach.window);
+        let mut state: Option<&Vec<f32>> = None;
+        for State{step,price,state: next_state} in saved_states.iter()
+        {
+            // for (step, kline, tas) in ds {
+            log::trace!("Current step: {}", step);
+            // let price = kline.last().unwrap().close;
+            // state_klines.push_back(kline);
+            // state_indicators.push_back(tas);
+            // if state_klines.len() < coach.window {
+            //     continue;
+            // }
+
+            // state_klines.make_contiguous();
+            // state_indicators.make_contiguous();
+            // let (klines, _) = state_klines.as_slices();
+            // let (indicators, _) = state_indicators.as_slices();
+            // let save_step_image = false; //step % 10 == 0;
+            // let next_state = get_img_state_vec(kline, tas, step as usize, save_step_image)?;
+            // let next_state: Vec<f32> = next_state.iter().map(|x| (*x as f32) / 255.0).collect();
+            if let Some(state) = state {
+                // 3. update curent price, because we now on new state
+
+                env.set_current_price(*price);
+                // 1. select and action for current state
+                let action = agent.choose_action(&state, true);
+                // 2. Make the action
+                env.step(action);
+
+                // 4. calculate reward against new state
+                let reward = env.calculate_reward();
+                // 5. check if we done.
+                let done = env.is_done();
+                // 6. Remembver the move :)
+                agent.update(state.clone(), action, reward, next_state.clone(), done);
+            }
+
+            state = Some(next_state);
+            //
+            //
+            //
+            // let _ = state_klines.pop_front();
+            // let _ = state_indicators.pop_front();
+        }
+        agent.episode_finished(ep);
+        log::info!("Eposide #{} finished", ep);
+        log::info!("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓");
+        log::info!(
+            "┃Eposide #{} / {} | {:.4}s",
+            ep,
+            coach.episodes,
+            time.elapsed().as_secs_f32(),
+        );
+        log::info!("┃{}", env.info());
+        log::info!("┃{}", agent.info());
+        log::info!("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛");
+    }
+    Ok(())
+}
+
+/// Simple program to download binance Kline data
+#[derive(Debug, Parser)] // requires `derive` feature
+#[command(name = "coach")]
+#[command(about = "Coach for environments", long_about = None)]
+struct Coach {
+    /// Number of episodes
+    #[arg(short, long, value_parser = clap::value_parser!(usize), default_value="10")]
+    episodes: usize,
+    /// Window size to train on
+    #[arg(short, long, value_parser = clap::value_parser!(usize), default_value="1")]
+    window: usize,
+    /// File path to Dataset
+    #[arg(short, long, value_parser = clap::value_parser!(PathBuf))]
+    file_path: PathBuf,
+    /// WMA  indicators
+    #[arg(long, value_parser = Coach::parse_ta)]
+    with_wma: Option<VecWrap>,
+    /// SMA  indicators
+    // #[arg(long, value_parser = Coach::parse_ta, default_value="[]")]
+    with_sma: Vec<PeriodType>,
+}
+#[derive(Debug, Clone)]
+struct VecWrap(pub Vec<PeriodType>);
+impl FromStr for VecWrap {
+    type Err = ParseIntError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let v = s
+            .trim()
+            .split(",")
+            .map(|s| s.trim().parse::<PeriodType>())
+            .filter(|x| x.is_ok())
+            .map(|x| x.unwrap())
+            .collect::<Vec<PeriodType>>();
+        Ok(Self(v))
+    }
+}
+impl Coach {
+    fn parse_ta(arg: &str) -> Result<VecWrap, Box<ParseIntError>> {
+        if arg.len() == 0 {
+            Ok(VecWrap(vec![]))
+        } else {
+            Ok(arg.parse::<VecWrap>().unwrap())
+        }
+    }
+
+    pub fn dataset(&self) -> Dataset {
+        let ds = Dataset::from(&self.file_path);
+        let ds = if let Some(wma) = &self.with_wma {
+            wma.0.iter().fold(ds, |ds, x| ds.with_wma(*x, &0.0))
+        } else {
+            ds
+        };
+        let ds = self.with_sma.iter().fold(ds, |ds, x| ds.with_sma(*x, &0.0));
+        ds
+    }
+}
