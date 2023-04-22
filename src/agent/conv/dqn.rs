@@ -35,8 +35,8 @@ pub struct DQNAgent {
     q_net: DQNModel<f32, Device>,
     target_q_net: DQNModel<f32, Device>,
     grads: Gradients<f32, Cuda>,
-    opt: Adam<DQNModel<f32, Device>, f32, Cuda>,
-    // opt: Sgd<QNetworkModel, f32, Cuda>,
+    opt: Box<dyn Optimizer<DQNModel<f32, Device>, Device, f32>>,//Adam<DQNModel<f32, Device>, f32, Cuda>,
+    // opt: Sgd<DQNModel<f32, Device>, f32, Cuda>,
     dev: Cuda,
     pub total_loss: f32,
     pub avg_loss: f32,
@@ -47,6 +47,9 @@ pub struct DQNAgent {
     random_actions: usize,
 }
 impl Agent for DQNAgent {
+    fn name(&self) -> String {
+        "conv-dqn".to_string()
+    }
     fn choose_random_action(&mut self) -> usize {
         self.random_actions += 1;
         // let mut rng = thread_rng();
@@ -57,18 +60,8 @@ impl Agent for DQNAgent {
         if train && fastrand::f32() < self.epsilon {
             self.choose_random_action()
         } else {
-            // let state = self
-            //     .dev
-            //     .tensor_from_vec(state.clone(), (Const::<1>, Const::<STATE>))
-            //     // .normalize::<Axis<1>>(f32::EPSILON)
-            //         ;
-            // let min = state.clone().min::<dfdx::shapes::Rank1<1>, _>().broadcast();
-            // let max = state.clone().max::<dfdx::shapes::Rank1<1>, _>().broadcast();
-
-            // let state: Tensor<(Const<1>, Const<_>), f32, Cuda> =
-            //     self.dev.tensor(2.0f32).broadcast() * (state - min.clone()) / (max - min) - self.dev.tensor(1f32).broadcast();
             let state: ImageTensor = self.dev.tensor(state.to_vec());
-            let q_values = self.q_net.forward_mut(state.trace(self.grads.clone()));
+            let q_values = self.q_net.forward(state);
             argmax(&q_values.as_vec()[..]) as usize
         }
     }
@@ -90,15 +83,17 @@ impl Agent for DQNAgent {
             }
         }
     }
-    fn episode_finished(&mut self, ep: usize) {
+    fn episode_finished(&mut self, _ep: usize) {
+        // if ep % 5 == 0 {
         self.target_q_net.clone_from(&self.q_net);
+        // }
+
         self.total_loss += self.eposide_loss;
         self.epsilon = self.min_epsilon.max(self.epsilon * self.epsilon_decay);
         self.grads = self.q_net.alloc_grads();
-        let lr = self.opt.cfg.lr;
-        if ep % 10 == 0 {
-            self.opt.cfg.lr = LEARNING_RATE_MIN.max(lr * LEARNING_RATE_DECAY);
-        }
+        // if ep % 10 == 0 {
+        //     self.opt.cfg.lr = LEARNING_RATE_MIN.max(self.opt.cfg.lr * LEARNING_RATE_DECAY);
+        // }
     }
     fn episode_started(&mut self, _ep: usize) {
         self.eposide_loss = 0.0;
@@ -108,12 +103,11 @@ impl Agent for DQNAgent {
 
     fn info(&mut self) -> String {
         format!(
-            "DQNAgent: loss: {:>-3.2e}/{:>-3.2e} | avg loss: {: >-3.2e} | mem len {}; LR={: >-3.2e} | random acts: {}",
+            "DQNAgent: loss: {:>-3.2e}/{:>-3.2e} | avg loss: {: >-3.2e} | mem len {}; | random acts: {}",
             self.eposide_loss,
             self.total_loss,
             self.eposide_loss / self.avg_loss.max(f32::EPSILON),
             self.memory.len(),
-            self.opt.cfg.lr,
             self.random_actions,
         )
     }
@@ -123,8 +117,8 @@ impl Agent for DQNAgent {
     }
 
     fn load<P: AsRef<std::path::Path>>(&mut self, path: P) {
-        self.q_net.load(&path).unwrap();
         self.target_q_net.load(&path).unwrap();
+        self.q_net.clone_from(&self.target_q_net);
     }
 }
 impl DQNAgent {
@@ -145,30 +139,30 @@ impl DQNAgent {
 
         let grads = q_net.alloc_grads();
 
-        // let opt: Sgd<QNetworkModel, f32, Cuda> = Sgd::new(
-        //     &q_net,
-        //     SgdConfig {
-        //         lr: LEARNING_RATE,
-        //         momentum: Some(Momentum::Nesterov(0.9)),
-        //         weight_decay: None,
-        //     },
-        // );
-        let opt: Adam<_, f32, Cuda> = Adam::new(
+        let opt: Sgd<DQNModel<f32, Device>, f32, Cuda> = Sgd::new(
             &q_net,
-            AdamConfig {
-                lr: LEARNING_RATE as f32,
-                betas: [0.5, 0.25],
-                eps: 1e-6,
-                weight_decay: Some(WeightDecay::Decoupled(1e-2)),
+            SgdConfig {
+                lr:  LEARNING_RATE as f32,
+                momentum: Some(Momentum::Nesterov(0.9)),
+                weight_decay: Some(WeightDecay::L2(4e-3)),
             },
         );
+        // let opt: Adam<_, f32, Cuda> = Adam::new(
+        //     &q_net,
+        //     AdamConfig {
+        //         lr: LEARNING_RATE as f32,
+        //         betas: [0.9, 0.99],
+        //         eps: 1e-6,
+        //         weight_decay: Some(WeightDecay::L2(1e-3)),
+        //     },
+        // );
         DQNAgent {
             memory_size: MEMORY_SIZE,
             memory,
             q_net,
             target_q_net,
             grads,
-            opt,
+            opt: Box::new(opt),
             dev,
             total_loss: 0.0,
             eposide_loss: 0.0,

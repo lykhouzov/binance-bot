@@ -9,7 +9,7 @@ pub mod memory;
 // pub mod tch;
 
 pub trait Agent {
-
+    fn name(&self) -> String;
     fn choose_action(&mut self, state: &StateTensor, train: bool) -> usize;
     fn choose_random_action(&mut self) -> usize;
     fn update(

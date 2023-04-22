@@ -10,24 +10,24 @@ pub const INIT_BALANCE: f32 = 100.0;
 pub const TARGET_BALANCE: f32 = INIT_BALANCE * 4.0;
 pub const SIZE_OF_TRADE: f32 = 0.001;
 pub const EPOSIDOES: usize = 150; //20000;
-pub const MEMORY_SIZE: usize = 500; //1_000;
-pub const LEARNING_RATE: f64 = 1e-3;
-pub const LEARNING_RATE_MIN: f32 = 1e-5;
+pub const MEMORY_SIZE: usize = 700; //1_000;
+pub const LEARNING_RATE: f64 = 1e-5;
+pub const LEARNING_RATE_MIN: f32 = 1e-4;
 pub const LEARNING_RATE_DECAY: f32 = 0.995;
 pub const HIDDEN_NUM: usize = STATE; // STATE*2
-pub const BATCH: usize = 32;
-pub const BATCH_TRAIN_TIMES: usize = 10;
-pub const TRAIN_EVERY_STEP: usize = 5;
-pub const TRAIN_MAX_STEPS: usize = 24 * 2;
+pub const BATCH: usize = 256;
+pub const BATCH_TRAIN_TIMES: usize = 5;
+pub const TRAIN_EVERY_STEP: usize = 12;
+pub const TRAIN_MAX_STEPS: usize = 24 * 30;
 
 pub const STATE: usize = NUM_FEATURES * WINDOW_SIZE + 3;
 pub const ACTION: usize = 3;
-pub const WINDOW_SIZE: usize = 24*5;
+pub const WINDOW_SIZE: usize = 24 * 3;
 pub const CANDLE_STICK_DATA_LEN: usize = 4;
 pub const NUM_FEATURES: usize = CANDLE_STICK_DATA_LEN; // it is required to recalculate each time when you add new feature
-pub const RANDOM_ACTION_EPSILON: f32 = 1.5;
+pub const RANDOM_ACTION_EPSILON: f32 = 1.0;
 pub const RANDOM_ACTION_EPSILON_MIN: f32 = 1e-3;
-pub const RANDOM_ACTION_EPSILON_DECAY: f32 = 0.9995;
+pub const RANDOM_ACTION_EPSILON_DECAY: f32 = 0.995;
 //
 //
 //
@@ -42,14 +42,17 @@ pub const SAVE_ENV_IMAGE_EVERY_STEP: usize = 5;
 
 pub const IMAGE_SIZE: usize = WINDOW_SIZE * 3; // 3px is every candle
 pub const IMAGE_WIDTH: usize = WINDOW_SIZE * 3; // 3px is every candle
-pub const IMAGE_HEIGHT: usize = 100; // 3px is every candle
+pub const IMAGE_HEIGHT: usize = WINDOW_SIZE * 2; // 3px is every candle
 pub const IMAGE_CH_IN: usize = 1; // We use grayscale image, so it is only 1 IN_CH
-pub const AFTER_FLAT: usize = 128;
-pub const L1: usize = 32;
+pub const AFTER_FLAT: usize = 1920;
+pub const L1: usize = 4;
 pub const L2: usize = L1 * 2;
 pub const L3: usize = L2 * 2;
 pub const L4: usize = L3 * 2;
-pub const VGG_FC: usize = 2048;
+pub const VGG_FC: usize = 512;
+pub const KERNEL_SIZE: usize = 4;
+pub const STRIDE: usize = 1;
+pub const PADDING: usize = 0;
 // const L1:usize = 64;
 // const L2:usize = 128;
 // const L3:usize = 256;

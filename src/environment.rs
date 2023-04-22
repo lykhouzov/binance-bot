@@ -5,7 +5,8 @@ use plotters::{
 };
 
 use crate::{
-    agent::consts::{BUFFER_SIZE, IMAGE_HEIGHT, IMAGE_WIDTH, TRAIN_MAX_STEPS, WINDOW_SIZE},
+    agent::consts::{BUFFER_SIZE, IMAGE_HEIGHT, IMAGE_WIDTH, TRAIN_MAX_STEPS},
+    dataset::DatasetRecord,
     Kline,
 };
 #[allow(unused)]
@@ -15,7 +16,7 @@ use crate::{
     },
     dataset::Dataset,
 };
-use std::{error::Error, path::Path};
+use std::error::Error;
 
 #[derive(Debug, Default)]
 pub enum Interval {
@@ -56,13 +57,13 @@ pub struct Environment {
 }
 #[allow(unused)]
 impl Environment {
-    pub fn new(init_balance: f32, init_step: usize, interval: Interval) -> Self {
+    pub fn new(init_balance: f32, interval: Interval) -> Self {
         // let dataset = Dataset::from(ds);
         Self {
             init_balance,
             balance: init_balance,
             interval,
-            init_step,
+            init_step: 0,
             dataset: None,
             current_price: Default::default(),
             stock_to_hold: Default::default(),
@@ -85,10 +86,10 @@ impl Environment {
             profit_trades: Default::default(),
         }
     }
-    pub fn with_ds<P: AsRef<Path>>(mut self, ds: P) -> Self {
-        self.dataset = Some(Dataset::from(ds));
-        self
-    }
+    // pub fn with_ds<P: AsRef<Path>>(mut self, ds: P) -> Self {
+    //     self.dataset = Some(Dataset::from(ds));
+    //     self
+    // }
     pub fn reset(&mut self) {
         self.balance = self.init_balance;
         self.current_price = Default::default();
@@ -226,45 +227,45 @@ impl Environment {
         // a reward is based on current Net Profit/Loss
         // and additional reward based on the action.
         -1.0 + self.net_pl
-        + match self.action {
-            0 => {
-                if self.holding_steps > 0 {
-                    // Give big reward penalty when it holds a stock and does not sell it
-                    -0.15 * (self.holding_steps as f32).log10()
-                } else {
-                    // Give some reward penalty when it just doing nothing
-                    -4.0
-                }
-            }
-            1 => {
-                // Give a reward whe it makes correct buy action
-                // that is if there is no holding stock the BUY action is legal
-                if let Some(transaction) = self.transactions.last() {
-                    if transaction.4 == 0.0 {
+            + match self.action {
+                0 => {
+                    if self.holding_steps > 0 {
+                        // Give big reward penalty when it holds a stock and does not sell it
+                        -0.15 * (self.holding_steps as f32).log10()
+                    } else {
+                        // Give some reward penalty when it just doing nothing
                         -4.0
+                    }
+                }
+                1 => {
+                    // Give a reward whe it makes correct buy action
+                    // that is if there is no holding stock the BUY action is legal
+                    if let Some(transaction) = self.transactions.last() {
+                        if transaction.4 == 0.0 {
+                            -4.0
+                        } else {
+                            1.0
+                        }
                     } else {
                         1.0
                     }
-                } else {
-                    1.0
                 }
-            }
-            2 => {
-                // Give a reward whe SELL gaves prfitable trade
-                // That is we earn when sell
-                if let Some(transaction) = self.transactions.last() {
-                    if transaction.4 > 0.0 && transaction.5 > 0.0 {
-                        5.0
+                2 => {
+                    // Give a reward whe SELL gaves prfitable trade
+                    // That is we earn when sell
+                    if let Some(transaction) = self.transactions.last() {
+                        if transaction.4 > 0.0 && transaction.5 > 0.0 {
+                            5.0
+                        } else {
+                            -4.0
+                        }
                     } else {
                         -4.0
                     }
-                } else {
-                    -4.0
                 }
+                // We should not be here, so just give huge disreward
+                _ => -10.0,
             }
-            // We should not be here, so just give huge disreward
-            _ => -10.0,
-        }
     }
     pub fn get_equity(&self) -> f32 {
         self.current_price * self.stock_to_hold * ONE_MINUS_TRANSACTION_FEE + self.balance
@@ -327,9 +328,10 @@ impl Environment {
         });
         let (i_min, i_max) = indicators
             .iter()
+            .map(|x| x.clone())
             .flatten()
             .fold((f32::MAX, f32::MIN), |acc, x| {
-                (acc.0.min(*x as f32), acc.1.max(*x as f32))
+                (acc.0.min(x as f32), acc.1.max(x as f32))
             });
         let min = min.min(i_min);
         let max = max.max(i_max);
@@ -391,7 +393,10 @@ impl Environment {
                 )
             }))?;
             if self.holding_steps > 0 {
-                let buy_points = [((data.len() - self.holding_steps) as i32, self.price_of_buy)];
+                let buy_points = [(
+                    (data.len() - self.holding_steps - 1) as i32,
+                    self.price_of_buy,
+                )];
                 chart.draw_series(buy_points.map(|coord| Pixel::new(coord, &DEEPPURPLE)));
             }
             //
@@ -421,31 +426,25 @@ impl Environment {
         self.get_equity() - self.init_balance
     }
 
-    pub fn save_episode_to_img(&self, ds: Dataset, ep: usize) -> Result<(), Box<dyn Error>> {
-        let mut ds = ds;
-        let skip_index = ds.skip_index();
-        for _ in 0..(ds.skip_index() as usize + WINDOW_SIZE + self.init_step) {
-            let _ = ds.next();
-        }
-        let mut i = 0;
-        let (min, max, data, indicators) = ds.fold(
+    pub fn save_episode_to_img<'a>(
+        &self,
+        iter: impl Iterator<Item = &'a DatasetRecord>,
+        ep: usize,
+    ) -> Result<(), Box<dyn Error>> {
+        let (min, max, data, indicators) = iter.fold(
             (f32::MAX, f32::MIN, vec![], vec![]),
-            |mut acc, (_s, kline, indicators)| {
-                if i < TRAIN_MAX_STEPS {
-                    // 1
-                    let (min, max) = (acc.0.min(kline.low as f32), acc.1.max(kline.high as f32));
-                    // 2
-                    let (i_min, i_max) = indicators.iter().fold((f32::MAX, f32::MIN), |acc, x| {
-                        (acc.0.min(*x as f32), acc.1.max(*x as f32))
-                    });
-                    // 3
-
-                    acc.0 = min.min(i_min);
-                    acc.1 = max.max(i_max);
-                    acc.2.push(kline);
-                    acc.3.push(indicators);
-                }
-                i += 1;
+            |mut acc, (kline, indicators)| {
+                // 1
+                let (min, max) = (acc.0.min(kline.low as f32), acc.1.max(kline.high as f32));
+                // 2
+                let (i_min, i_max) = indicators.iter().fold((f32::MAX, f32::MIN), |acc, x| {
+                    (acc.0.min(*x as f32), acc.1.max(*x as f32))
+                });
+                // 3
+                acc.0 = min.min(i_min);
+                acc.1 = max.max(i_max);
+                acc.2.push(kline);
+                acc.3.push(indicators);
                 acc
             },
         );
@@ -456,7 +455,7 @@ impl Environment {
             .map(|x| {
                 let data_step = x.0;
                 if let Some(price) = data.get(data_step) {
-                    let coord = (data_step as i32, x.2);
+                    let coord = (data_step as i32 - 1, x.2);
                     Some(match x.1 {
                         1 => Circle::new(coord, 1, &GREEN_900),
                         2 => Circle::new(coord, 1, &RED),

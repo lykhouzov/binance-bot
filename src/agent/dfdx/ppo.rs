@@ -76,6 +76,9 @@ pub struct PPOAgent {
 }
 
 impl Agent for PPOAgent {
+    fn name(&self)->String{
+        "dfdx-ppo".to_string()
+    }
     fn choose_random_action(&mut self) -> usize {
         self.stats.random_actions += 1;
         fastrand::usize(0..ACTION)

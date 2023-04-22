@@ -115,6 +115,9 @@ impl Agent for DQNAgent {
         self.q_net.load(&path).unwrap();
         self.target_q_net.load(&path).unwrap();
     }
+    fn name(&self)->String{
+        "dfdx-dqn".to_string()
+    }
 }
 impl DQNAgent {
     pub fn new(// input_dim: i64,

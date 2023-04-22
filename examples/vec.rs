@@ -18,7 +18,7 @@ fn main() {
         .enumerate()
         .fold_with(
             Arc::clone(&output),
-            |mut acc: Arc<Mutex<(Vec<i32>, Vec<f64>, Vec<&str>)>>,
+            |acc: Arc<Mutex<(Vec<i32>, Vec<f64>, Vec<&str>)>>,
              (idx, x): (usize, (i32, f64, &str))| {
                 println!("{:?}", acc);
                 println!("{:?}", x.0);

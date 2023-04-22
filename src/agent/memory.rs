@@ -4,6 +4,7 @@ use std::ops::*;
 // State, Action, Next State, Done
 type MemoryType<S, A, R, N, D> = (S, A, R, N, D);
 pub type Sample<S, A, R, N, D> = (Vec<S>, Vec<A>, Vec<R>, Vec<N>, Vec<D>);
+#[derive(Debug)]
 pub struct Memory<S, A, R, N, D> {
     memory: VecDeque<MemoryType<S, A, R, N, D>>,
     memory_size: usize,
